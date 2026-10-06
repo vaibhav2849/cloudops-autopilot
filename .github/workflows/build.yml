@@ -2,9 +2,11 @@ name: CloudOps AutoPilot CI/CD
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -65,7 +67,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy Scan
-uses: aquasecurity/trivy-action@v0.36.0        with:
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
