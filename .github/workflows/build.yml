@@ -1,30 +1,127 @@
-name: Build and Push
+name: CloudOps AutoPilot CI/CD
+
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
 permissions:
-  id-token: write
   contents: read
-env:
-  AWS_REGION: ap-south-1
-  ECR_REPOSITORY: cloudops-autopilot
+
 jobs:
-  build:
+
+  test:
+    name: Python Tests
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: AWS OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-      - name: ECR Login
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and Push
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          python-version: "3.11"
+
+      - name: Install Dependencies
         run: |
-          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
-          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt
+          pip install pytest
+
+      - name: Run Application Tests
+        run: |
+          python -m pytest
+
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t cloudops-autopilot:${{ github.sha }} ./app
+
+      - name: Verify Docker Image
+        run: |
+          docker images
+          docker inspect cloudops-autopilot:${{ github.sha }} > /dev/null
+
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: docker
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+
+  terraform:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+    needs: test
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan
+
+
+  summary:
+    name: CI/CD Summary
+    runs-on: ubuntu-latest
+    needs:
+      - test
+      - docker
+      - security
+      - terraform
+
+    steps:
+      - name: Deployment Summary
+        run: |
+          echo "======================================"
+          echo "       CloudOps AutoPilot CI/CD"
+          echo "======================================"
+          echo "Python Tests       : PASSED"
+          echo "Docker Build       : PASSED"
+          echo "Security Scan      : PASSED"
+          echo "Terraform Validate : PASSED"
+          echo "Terraform Plan     : PASSED"
+          echo "======================================"
